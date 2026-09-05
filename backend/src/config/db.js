@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('./logger');
 
 const connectDB = async () => {
   try {
@@ -13,9 +14,7 @@ const connectDB = async () => {
       autoIndex: true,
     });
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`MongoDB Connected: ${conn.connection.host}`);
-    }
+    logger.info({ host: conn.connection.host }, 'MongoDB connected successfully');
 
     // Synchronize Mongoose compound unique indexes to guarantee database-level concurrency protection
     const { Appointment, Doctor, User, DoctorLeave, Notification, Prescription } = require('../models');
@@ -28,28 +27,24 @@ const connectDB = async () => {
       Prescription.syncIndexes(),
     ]);
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('MongoDB Compound Unique Indexes Synchronized');
-    }
+    logger.debug('MongoDB Compound Unique Indexes Synchronized');
 
     // Attach connection lifecycle event handlers
     mongoose.connection.on('error', (err) => {
-      console.error(`MongoDB Connection Error: ${err.message}`);
+      logger.error({ err: err.message }, 'MongoDB Connection Error');
     });
 
     mongoose.connection.on('disconnected', () => {
-      console.warn('MongoDB connection lost. Reconnecting...');
+      logger.warn('MongoDB connection lost. Reconnecting...');
     });
 
     mongoose.connection.on('reconnected', () => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('MongoDB connection re-established.');
-      }
+      logger.info('MongoDB connection re-established.');
     });
 
     return conn;
   } catch (error) {
-    console.error(`MongoDB Connection Error: ${error.message}`);
+    logger.error({ err: error.message }, 'MongoDB Connection Error');
     if (process.env.NODE_ENV === 'production') {
       process.exit(1);
     }

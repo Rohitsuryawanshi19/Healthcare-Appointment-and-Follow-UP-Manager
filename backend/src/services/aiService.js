@@ -6,6 +6,7 @@ const {
   postVisitResponseSchema,
   defaultGenerationConfig,
 } = require('../config/aiConfig');
+const logger = require('../config/logger');
 
 const PRE_VISIT_DISCLAIMER =
   'AI-generated informational summary. This does not constitute a medical diagnosis.';
@@ -236,7 +237,7 @@ async function generatePreVisitSummary(symptoms, options = {}) {
       status: 'completed',
     };
   } catch (error) {
-    console.error(`[AI Service Error - ${correlationId}] Pre-visit generation failed:`, error.message);
+    logger.warn({ correlationId, err: error.message }, '[AI Service] Pre-visit generation failed, using heuristic fallback');
     return generateHeuristicFallback(symptoms, error.message);
   }
 }
@@ -315,7 +316,7 @@ Follow-up Instructions: ${followUpInstructions || 'Standard monitoring'}`;
       status: 'completed',
     };
   } catch (error) {
-    console.error(`[AI Service Error - ${correlationId}] Post-visit generation failed:`, error.message);
+    logger.warn({ correlationId, err: error.message }, '[AI Service] Post-visit generation failed, using heuristic fallback');
     return generatePostVisitHeuristic(
       { diagnosis, doctorNotes, medicines, followUpInstructions },
       error.message
@@ -374,7 +375,7 @@ async function* streamPatientChat({ message, history = [] }, options = {}) {
       }
     }
   } catch (error) {
-    console.error(`[AI Chat Stream Error - ${correlationId}]:`, error.message);
+    logger.warn({ correlationId, err: error.message }, '[AI Chat Stream Error]');
     yield `\n\n[Notice: Connectivity issue. For your symptoms, please book an appointment with a verified CareFlow doctor for a comprehensive medical assessment.]\n\n*${PRE_VISIT_DISCLAIMER}*`;
   }
 }

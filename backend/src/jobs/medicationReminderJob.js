@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const logger = require('../config/logger');
 const { Prescription } = require('../models');
 const {
   processDueReminders,
@@ -14,7 +15,7 @@ let cronTask = null;
  */
 function startMedicationReminderJob() {
   if (cronTask) {
-    console.log('Background Notification Job runner is already active.');
+    logger.debug('Background Notification Job runner is already active.');
     return cronTask;
   }
 
@@ -24,7 +25,7 @@ function startMedicationReminderJob() {
       // 1. Process all due medication reminders
       const { processedCount } = await processDueReminders(new Date());
       if (processedCount > 0) {
-        console.log(`[NotificationJob] Processed and delivered ${processedCount} medication reminders.`);
+        logger.info({ processedCount }, '[NotificationJob] Processed and delivered medication reminders.');
       }
 
       // 2. Scan active prescriptions to ensure all upcoming doses have notifications scheduled
@@ -36,14 +37,14 @@ function startMedicationReminderJob() {
       // 3. Retry failed transactional emails (up to 3 retries)
       const retryResult = await retryPendingAndFailedEmails();
       if (retryResult.succeededCount > 0) {
-        console.log(`[NotificationJob] Successfully re-delivered ${retryResult.succeededCount} transactional emails.`);
+        logger.info({ succeededCount: retryResult.succeededCount }, '[NotificationJob] Successfully re-delivered transactional emails.');
       }
     } catch (err) {
-      console.error('[NotificationJob] Error in background job execution:', err.message);
+      logger.error({ err: err.message }, '[NotificationJob] Error in background job execution');
     }
   });
 
-  console.log('[NotificationJob] Background Cron Runner initialized (every minute).');
+  logger.info('[NotificationJob] Background Cron Runner initialized (every minute).');
   return cronTask;
 }
 
@@ -51,7 +52,7 @@ function stopMedicationReminderJob() {
   if (cronTask) {
     cronTask.stop();
     cronTask = null;
-    console.log('[NotificationJob] Background Cron Runner stopped.');
+    logger.info('[NotificationJob] Background Cron Runner stopped.');
   }
 }
 

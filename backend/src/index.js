@@ -2,12 +2,24 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
+const mongoose = require('mongoose');
+const Sentry = require('@sentry/node');
 require('dotenv').config();
+
+// 0. Sentry Initialization (gated behind SENTRY_DSN)
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  });
+}
 
 // 1. Fast-Fail Environment Variable Validation
 const { validateEnv } = require('./config/envValidator');
 validateEnv();
 
+const logger = require('./config/logger');
 const connectDB = require('./config/db');
 const { startMedicationReminderJob } = require('./jobs/medicationReminderJob');
 const { correlationIdMiddleware } = require('./middleware/correlationId.middleware');
@@ -107,7 +119,7 @@ app.use(
         return callback(null, true);
       }
 
-      console.warn(`[CORS Blocked] Origin not in allowed whitelist: '${origin}'`);
+      logger.warn({ origin }, `[CORS Blocked] Origin not in allowed whitelist: '${origin}'`);
       return callback(new Error(`Blocked by CORS policy: Origin '${origin}' is not authorized.`));
     },
     credentials: true,
@@ -134,11 +146,16 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/calendar', calendarRoutes);
 
-// Health Check Route
+// Health Check Route (Live Database Readiness Check)
 app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'CareFlow API is running securely',
+  const isDbConnected = mongoose.connection.readyState === 1;
+  const statusCode = isDbConnected ? 200 : 503;
+  res.status(statusCode).json({
+    status: isDbConnected ? 'healthy' : 'unhealthy',
+    database: {
+      connected: isDbConnected,
+      readyState: mongoose.connection.readyState,
+    },
     environment: process.env.NODE_ENV || 'development',
     correlationId: req.correlationId,
     timestamp: new Date().toISOString(),
@@ -225,7 +242,15 @@ app.use((err, req, res, next) => {
 
   // Default Catch-All: never leak internal stack traces in production
   const statusCode = err.status || 500;
-  console.error(`[Unhandled Error - ${correlationId}]:`, err);
+  if (req.log) {
+    req.log.error({ err, correlationId, statusCode }, `Unhandled Error: ${err.message}`);
+  } else {
+    logger.error({ err, correlationId, statusCode }, `Unhandled Error: ${err.message}`);
+  }
+
+  if (process.env.SENTRY_DSN && statusCode >= 500) {
+    Sentry.captureException(err);
+  }
 
   res.status(statusCode).json({
     success: false,
@@ -238,7 +263,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
+    logger.info(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
     startMedicationReminderJob();
   });
 }

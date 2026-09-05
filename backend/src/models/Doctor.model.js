@@ -119,7 +119,8 @@ const doctorSchema = new mongoose.Schema(
   }
 );
 
-// Compound indexes for searching verified doctors by specialization
+// Compound indexes for searching verified doctors by specialization and experience ranking
 doctorSchema.index({ specialization: 1, verificationStatus: 1 });
+doctorSchema.index({ verificationStatus: 1, experience: -1 });
 
 module.exports = mongoose.model('Doctor', doctorSchema);

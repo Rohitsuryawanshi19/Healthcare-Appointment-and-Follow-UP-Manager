@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const logger = require('../config/logger');
 
 function correlationIdMiddleware(req, res, next) {
   const correlationId =
@@ -8,6 +9,7 @@ function correlationIdMiddleware(req, res, next) {
 
   req.correlationId = correlationId;
   req.id = correlationId;
+  req.log = logger.child({ correlationId });
 
   res.setHeader('X-Correlation-ID', correlationId);
 
@@ -16,12 +18,23 @@ function correlationIdMiddleware(req, res, next) {
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     const status = res.statusCode;
-    const isError = status >= 400;
 
-    const logFn = isError ? console.warn : console.log;
-    logFn(
-      `[${new Date().toISOString()}] [${correlationId}] ${req.method} ${req.originalUrl} - ${status} (${duration}ms)`
-    );
+    const meta = {
+      correlationId,
+      method: req.method,
+      url: req.originalUrl,
+      statusCode: status,
+      durationMs: duration,
+      ip: req.ip,
+    };
+
+    if (status >= 500) {
+      req.log.error(meta, `${req.method} ${req.originalUrl} - ${status} (${duration}ms)`);
+    } else if (status >= 400) {
+      req.log.warn(meta, `${req.method} ${req.originalUrl} - ${status} (${duration}ms)`);
+    } else {
+      req.log.info(meta, `${req.method} ${req.originalUrl} - ${status} (${duration}ms)`);
+    }
   });
 
   next();

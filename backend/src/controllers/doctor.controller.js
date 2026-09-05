@@ -1,6 +1,7 @@
 const { Doctor, User, Appointment, Prescription, DoctorLeave } = require('../models');
 const { generatePostVisitSummary } = require('../services/aiService');
 const { sendDoctorLeaveNotification } = require('../services/emailService');
+const { invalidateCachePattern } = require('../services/cacheService');
 
 // Helper to get doctor profile for logged-in user
 const getDoctorForUser = async (userId) => {
@@ -72,7 +73,7 @@ exports.getDashboardStats = async (req, res, next) => {
   }
 };
 
-// @desc    Get Doctor Appointments with filters
+// @desc    Get Doctor Appointments with filters & pagination
 // @route   GET /api/doctor/appointments
 // @access  Private (Doctor only)
 exports.getAppointments = async (req, res, next) => {
@@ -97,14 +98,26 @@ exports.getAppointments = async (req, res, next) => {
       query.date = { $lt: todayStr };
     }
 
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = await Appointment.countDocuments(query);
+    const totalPages = Math.ceil(total / limit) || 1;
+
     const appointments = await Appointment.find(query)
       .populate('patientId', 'name email phone')
       .populate('prescriptionId')
-      .sort({ date: -1, startTime: -1 });
+      .sort({ date: -1, startTime: -1 })
+      .skip(skip)
+      .limit(limit);
 
     res.status(200).json({
       success: true,
       count: appointments.length,
+      total,
+      page,
+      totalPages,
       data: appointments,
     });
   } catch (error) {
@@ -425,6 +438,7 @@ exports.updateProfile = async (req, res, next) => {
     await doctor.save();
 
     const updated = await Doctor.findById(doctor._id).populate('userId', 'name email phone role');
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,
@@ -469,6 +483,7 @@ exports.updateSchedule = async (req, res, next) => {
     if (slotDuration) doctor.slotDuration = Number(slotDuration);
 
     await doctor.save();
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,
@@ -533,6 +548,8 @@ exports.addLeave = async (req, res, next) => {
       }).catch((e) => console.warn('Doctor leave email notification non-fatal error:', e.message));
     }
 
+    await invalidateCachePattern('cache:doctors:*');
+
     res.status(201).json({
       success: true,
       message: 'Leave scheduled successfully.',
@@ -560,6 +577,8 @@ exports.deleteLeave = async (req, res, next) => {
         message: 'Leave record not found.',
       });
     }
+
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,

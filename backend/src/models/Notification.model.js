@@ -103,6 +103,7 @@ notificationSchema.index(
 
 // Optimize notification delivery worker queries
 notificationSchema.index({ status: 1, scheduledFor: 1, retryCount: 1 });
+notificationSchema.index({ type: 1, status: 1, scheduledFor: 1 });
 notificationSchema.index({ userId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Notification', notificationSchema);

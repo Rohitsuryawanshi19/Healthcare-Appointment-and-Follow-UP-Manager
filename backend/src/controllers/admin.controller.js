@@ -1,6 +1,7 @@
 const { User, Doctor, Appointment, DoctorLeave, Notification } = require('../models');
 const { sendDoctorLeaveNotification, sendCancellationEmail } = require('../services/emailService');
 const { deleteCalendarEvent } = require('../services/calendarService');
+const { invalidateCachePattern } = require('../services/cacheService');
 
 // @desc    Get Admin Dashboard KPI Statistics
 // @route   GET /api/admin/stats
@@ -53,7 +54,7 @@ exports.getDashboardStats = async (req, res, next) => {
   }
 };
 
-// @desc    Get all doctors with filtering and search
+// @desc    Get all doctors with filtering, search, and pagination
 // @route   GET /api/admin/doctors
 // @access  Private (Admin only)
 exports.getDoctors = async (req, res, next) => {
@@ -83,10 +84,21 @@ exports.getDoctors = async (req, res, next) => {
       );
     }
 
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = doctors.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const paginated = req.query.page || req.query.limit ? doctors.slice(skip, skip + limit) : doctors;
+
     res.status(200).json({
       success: true,
-      count: doctors.length,
-      data: doctors,
+      count: paginated.length,
+      total,
+      page,
+      totalPages,
+      data: paginated,
     });
   } catch (error) {
     next(error);
@@ -167,6 +179,7 @@ exports.createDoctor = async (req, res, next) => {
     });
 
     const populatedDoctor = await Doctor.findById(doctor._id).populate('userId', 'name email phone role');
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(201).json({
       success: true,
@@ -256,6 +269,7 @@ exports.updateDoctor = async (req, res, next) => {
     await doctor.save();
 
     const updatedDoctor = await Doctor.findById(doctor._id).populate('userId', 'name email phone role');
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,
@@ -294,6 +308,7 @@ exports.updateDoctorVerification = async (req, res, next) => {
     await doctor.save();
 
     const updatedDoctor = await Doctor.findById(doctor._id).populate('userId', 'name email phone role');
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,
@@ -305,7 +320,7 @@ exports.updateDoctorVerification = async (req, res, next) => {
   }
 };
 
-// @desc    Get all appointments across the system
+// @desc    Get all appointments across the system with pagination
 // @route   GET /api/admin/appointments
 // @access  Private (Admin only)
 exports.getAppointments = async (req, res, next) => {
@@ -316,17 +331,29 @@ exports.getAppointments = async (req, res, next) => {
     if (status) query.status = status;
     if (date) query.date = date;
 
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = await Appointment.countDocuments(query);
+    const totalPages = Math.ceil(total / limit) || 1;
+
     const appointments = await Appointment.find(query)
       .populate('patientId', 'name email phone')
       .populate({
         path: 'doctorId',
         populate: { path: 'userId', select: 'name email phone' },
       })
-      .sort({ date: -1, startTime: -1 });
+      .sort({ date: -1, startTime: -1 })
+      .skip(skip)
+      .limit(limit);
 
     res.status(200).json({
       success: true,
       count: appointments.length,
+      total,
+      page,
+      totalPages,
       data: appointments,
     });
   } catch (error) {
@@ -334,7 +361,7 @@ exports.getAppointments = async (req, res, next) => {
   }
 };
 
-// @desc    Get all registered users with role breakdown
+// @desc    Get all registered users with role breakdown and pagination
 // @route   GET /api/admin/users
 // @access  Private (Admin only)
 exports.getUsers = async (req, res, next) => {
@@ -351,11 +378,24 @@ exports.getUsers = async (req, res, next) => {
       ];
     }
 
-    const users = await User.find(query).sort({ createdAt: -1 });
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = await User.countDocuments(query);
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    const users = await User.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
     res.status(200).json({
       success: true,
       count: users.length,
+      total,
+      page,
+      totalPages,
       data: users,
     });
   } catch (error) {
@@ -508,6 +548,8 @@ exports.addDoctorLeave = async (req, res, next) => {
       }).catch((e) => console.warn('Doctor leave notice email warning:', e.message));
     }
 
+    await invalidateCachePattern('cache:doctors:*');
+
     res.status(201).json({
       success: true,
       message: `Doctor marked unavailable on ${date}. ${affectedAppointments.length} existing appointments cancelled and notified.`,
@@ -533,6 +575,8 @@ exports.removeDoctorLeave = async (req, res, next) => {
     if (!leave) {
       return res.status(404).json({ success: false, message: 'Scheduled leave record not found.' });
     }
+
+    await invalidateCachePattern('cache:doctors:*');
 
     res.status(200).json({
       success: true,

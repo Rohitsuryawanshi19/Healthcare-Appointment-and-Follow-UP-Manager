@@ -206,5 +206,8 @@ appointmentSchema.index(
 appointmentSchema.index({ doctorId: 1, date: 1, status: 1 });
 appointmentSchema.index({ patientId: 1, status: 1, date: -1 });
 appointmentSchema.index({ status: 1, expiresAt: 1 });
+appointmentSchema.index({ date: -1, startTime: -1 });
+appointmentSchema.index({ patientId: 1, date: -1 });
+appointmentSchema.index({ doctorId: 1, date: -1, status: 1 });
 
 module.exports = mongoose.model('Appointment', appointmentSchema);

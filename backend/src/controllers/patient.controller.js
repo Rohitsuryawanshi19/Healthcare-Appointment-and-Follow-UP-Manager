@@ -1,5 +1,6 @@
 const { User, Doctor, Appointment, Prescription, DoctorLeave, Notification } = require('../models');
 const { getNextReminderTime, parseDurationInDays } = require('../services/medicationReminderService');
+const { getCache, setCache } = require('../services/cacheService');
 
 // @desc    Get Patient Dashboard Summary
 // @route   GET /api/patient/dashboard
@@ -84,11 +85,17 @@ exports.getDashboard = async (req, res, next) => {
   }
 };
 
-// @desc    Get Doctors Directory with search and filtering
+// @desc    Get Doctors Directory with search, filtering, caching, and pagination
 // @route   GET /api/patient/doctors
 // @access  Private (Patient only)
 exports.getDoctors = async (req, res, next) => {
   try {
+    const cacheKey = `cache:doctors:${JSON.stringify(req.query)}`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
     const { specialization, minExperience, verifiedOnly, search } = req.query;
     const query = {};
 
@@ -114,16 +121,31 @@ exports.getDoctors = async (req, res, next) => {
       doctors = doctors.filter(
         (doc) =>
           searchRegex.test(doc.userId?.name || '') ||
-          searchRegex.test(doc.specialization) ||
-          searchRegex.test(doc.qualification)
+          searchRegex.test(doc.specialization || '') ||
+          searchRegex.test(doc.qualification || '')
       );
     }
 
-    res.status(200).json({
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = doctors.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const paginated = req.query.page || req.query.limit ? doctors.slice(skip, skip + limit) : doctors;
+
+    const responsePayload = {
       success: true,
-      count: doctors.length,
-      data: doctors,
-    });
+      count: paginated.length,
+      total,
+      page,
+      totalPages,
+      data: paginated,
+    };
+
+    await setCache(cacheKey, responsePayload, 60);
+
+    res.status(200).json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -173,7 +195,7 @@ exports.getDoctorById = async (req, res, next) => {
   }
 };
 
-// @desc    Get Patient Appointments with status filter
+// @desc    Get Patient Appointments with status filter & pagination
 // @route   GET /api/patient/appointments
 // @access  Private (Patient only)
 exports.getAppointments = async (req, res, next) => {
@@ -193,17 +215,29 @@ exports.getAppointments = async (req, res, next) => {
       query.date = { $lt: todayStr };
     }
 
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const total = await Appointment.countDocuments(query);
+    const totalPages = Math.ceil(total / limit) || 1;
+
     const appointments = await Appointment.find(query)
       .populate({
         path: 'doctorId',
         populate: { path: 'userId', select: 'name email phone' },
       })
       .populate('prescriptionId')
-      .sort({ date: -1, startTime: -1 });
+      .sort({ date: -1, startTime: -1 })
+      .skip(skip)
+      .limit(limit);
 
     res.status(200).json({
       success: true,
       count: appointments.length,
+      total,
+      page,
+      totalPages,
       data: appointments,
     });
   } catch (error) {
