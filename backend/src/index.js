@@ -1,4 +1,5 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
@@ -21,6 +22,7 @@ validateEnv();
 
 const logger = require('./config/logger');
 const connectDB = require('./config/db');
+const { initSocket } = require('./services/socketService');
 const { startMedicationReminderJob } = require('./jobs/medicationReminderJob');
 const { correlationIdMiddleware } = require('./middleware/correlationId.middleware');
 const { generalApiLimiter } = require('./middleware/rateLimiter.middleware');
@@ -35,6 +37,10 @@ const aiRoutes = require('./routes/ai.routes');
 const calendarRoutes = require('./routes/calendar.routes');
 
 const app = express();
+const server = http.createServer(app);
+
+// Initialize real-time Socket.IO service
+initSocket(server);
 
 // 2. Connect Database (skipped in test mode; managed by test harness)
 if (process.env.NODE_ENV !== 'test') {
@@ -262,10 +268,11 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     logger.info(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
     startMedicationReminderJob();
   });
 }
 
 module.exports = app;
+module.exports.server = server;

@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authService } from '../services/authService';
+import { connectSocket, disconnectSocket } from '../services/socket';
+import { useToast } from '../components/ui/Toast';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
   // Check existing session via HTTP-only cookie on mount
   const checkAuth = useCallback(async () => {
@@ -26,6 +29,32 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  // Connect socket on active user session and listen for real-time notifications
+  useEffect(() => {
+    if (!user) {
+      disconnectSocket();
+      return;
+    }
+
+    const socket = connectSocket();
+    if (!socket) return;
+
+    const handleNotification = (notif) => {
+      if (!notif) return;
+      toast({
+        title: notif.title || 'CareFlow Notification',
+        description: notif.message || notif.description || '',
+        variant: notif.variant || (notif.type === 'appointment_cancelled' ? 'warning' : 'info'),
+      });
+    };
+
+    socket.on('notification', handleNotification);
+
+    return () => {
+      socket.off('notification', handleNotification);
+    };
+  }, [user, toast]);
 
   // Login handler
   const login = async (credentials) => {
@@ -61,6 +90,7 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.error('Logout error:', err);
     } finally {
+      disconnectSocket();
       setUser(null);
     }
   };

@@ -2,6 +2,7 @@ const { Doctor, User, Appointment, Prescription, DoctorLeave } = require('../mod
 const { generatePostVisitSummary } = require('../services/aiService');
 const { sendDoctorLeaveNotification } = require('../services/emailService');
 const { invalidateCachePattern } = require('../services/cacheService');
+const { emitNotification } = require('../services/socketService');
 
 // Helper to get doctor profile for logged-in user
 const getDoctorForUser = async (userId) => {
@@ -274,6 +275,15 @@ exports.savePrescription = async (req, res, next) => {
       await appointment.save();
     }
 
+    if (appointment.patientId) {
+      emitNotification(appointment.patientId, {
+        type: 'prescription_ready',
+        title: 'New Prescription Recorded',
+        message: 'Your physician has prescribed medications for your visit.',
+        appointmentId: appointment._id,
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: 'Prescription saved successfully.',
@@ -373,6 +383,16 @@ exports.submitConsultation = async (req, res, next) => {
       .populate('patientId', 'name email phone')
       .populate({ path: 'doctorId', populate: { path: 'userId', select: 'name email phone' } })
       .populate('prescriptionId');
+
+    // Live Socket.IO notification emission to patient
+    if (appointment.patientId) {
+      emitNotification(appointment.patientId, {
+        type: 'prescription_ready',
+        title: 'Consultation Complete & Care Plan Ready',
+        message: `Your consultation with ${doctor.userId?.name || 'Doctor'} is concluded. Care summary and prescriptions are ready.`,
+        appointmentId: appointment._id,
+      });
+    }
 
     res.status(200).json({
       success: true,

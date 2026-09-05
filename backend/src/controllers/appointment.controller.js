@@ -18,6 +18,7 @@ const {
   updateCalendarEvent,
   deleteCalendarEvent,
 } = require('../services/calendarService');
+const { emitNotification } = require('../services/socketService');
 
 const HOLD_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -423,6 +424,24 @@ exports.createAppointment = async (req, res, next) => {
       doctor: populatedAppointment.doctorId,
     }).catch((e) => console.warn('Google Calendar sync non-fatal error:', e.message));
 
+    // Live Socket.IO notification emission
+    if (populatedAppointment.patientId?._id) {
+      emitNotification(populatedAppointment.patientId._id, {
+        type: 'appointment_confirmed',
+        title: 'Appointment Confirmed',
+        message: `Your consultation with ${populatedAppointment.doctorId?.userId?.name || 'Doctor'} on ${date} at ${startTime} is confirmed.`,
+        appointmentId: populatedAppointment._id,
+      });
+    }
+    if (populatedAppointment.doctorId?.userId?._id) {
+      emitNotification(populatedAppointment.doctorId.userId._id, {
+        type: 'appointment_confirmed',
+        title: 'New Appointment Booked',
+        message: `New booking with ${populatedAppointment.patientId?.name || 'Patient'} on ${date} at ${startTime}.`,
+        appointmentId: populatedAppointment._id,
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'Appointment booked successfully.',
@@ -481,6 +500,24 @@ exports.cancelAppointment = async (req, res, next) => {
         appointmentId: appointment._id,
         googleCalendarEventId: eventIdToDelete,
       }).catch((e) => console.warn('Calendar delete event non-fatal error:', e.message));
+    }
+
+    // Live Socket.IO notification emission
+    if (appointment.patientId?._id) {
+      emitNotification(appointment.patientId._id, {
+        type: 'appointment_cancelled',
+        title: 'Appointment Cancelled',
+        message: `Consultation on ${appointment.date} at ${appointment.startTime} was cancelled by ${req.user.name}.`,
+        appointmentId: appointment._id,
+      });
+    }
+    if (appointment.doctorId?.userId?._id) {
+      emitNotification(appointment.doctorId.userId._id, {
+        type: 'appointment_cancelled',
+        title: 'Appointment Cancelled',
+        message: `Consultation with ${appointment.patientId?.name || 'Patient'} on ${appointment.date} at ${appointment.startTime} was cancelled.`,
+        appointmentId: appointment._id,
+      });
     }
 
     res.status(200).json({
@@ -596,6 +633,24 @@ exports.rescheduleAppointment = async (req, res, next) => {
         newStartTime,
         newEndTime,
       }).catch((e) => console.warn('Calendar update event non-fatal error:', e.message));
+    }
+
+    // Live Socket.IO notification emission
+    if (populated.patientId?._id) {
+      emitNotification(populated.patientId._id, {
+        type: 'appointment_rescheduled',
+        title: 'Appointment Rescheduled',
+        message: `Consultation rescheduled to ${newDate} at ${newStartTime}.`,
+        appointmentId: newAppointment._id,
+      });
+    }
+    if (populated.doctorId?.userId?._id) {
+      emitNotification(populated.doctorId.userId._id, {
+        type: 'appointment_rescheduled',
+        title: 'Appointment Rescheduled',
+        message: `Consultation with ${populated.patientId?.name || 'Patient'} rescheduled to ${newDate} at ${newStartTime}.`,
+        appointmentId: newAppointment._id,
+      });
     }
 
     res.status(200).json({

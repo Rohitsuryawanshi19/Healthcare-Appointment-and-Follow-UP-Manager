@@ -1,4 +1,5 @@
 const { Notification, Prescription, User } = require('../models');
+const { emitNotification } = require('./socketService');
 
 /**
  * Parses duration string (e.g., "5 days", "14 days", "1 month", "2 weeks") into number of days
@@ -156,6 +157,17 @@ async function processDueReminders(now = new Date()) {
         $set: { status: 'sent', sentAt: now },
       }
     );
+
+    // Emit live in-app reminders to connected patients
+    dueReminders.forEach((r) => {
+      emitNotification(r.userId, {
+        _id: r._id,
+        type: 'medication_reminder',
+        title: r.title || `Medication Reminder: ${r.medicineName}`,
+        message: r.message,
+        scheduledFor: r.scheduledFor,
+      });
+    });
 
     return { processedCount: result.modifiedCount };
   } catch (error) {

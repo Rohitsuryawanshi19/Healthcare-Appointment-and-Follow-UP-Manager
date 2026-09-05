@@ -1,6 +1,21 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User.model');
 
+/**
+ * Shared helper to verify JWT token and retrieve corresponding user
+ * Used by HTTP requireAuth middleware and Socket.IO connection handshake
+ */
+const verifyUserToken = async (token) => {
+  if (!token) return null;
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured.');
+  }
+  const decoded = jwt.verify(token, secret);
+  if (!decoded || !decoded.id) return null;
+  return await User.findById(decoded.id);
+};
+
 // Middleware to verify JWT and authenticate user
 const requireAuth = async (req, res, next) => {
   try {
@@ -25,13 +40,7 @@ const requireAuth = async (req, res, next) => {
       });
     }
 
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      throw new Error('JWT_SECRET is not configured.');
-    }
-    const decoded = jwt.verify(token, secret);
-
-    const user = await User.findById(decoded.id);
+    const user = await verifyUserToken(token);
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -88,4 +97,5 @@ const requireRole = (...roles) => {
 module.exports = {
   requireAuth,
   requireRole,
+  verifyUserToken,
 };

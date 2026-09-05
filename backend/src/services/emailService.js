@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { Notification, User } = require('../models');
+const { emitNotification } = require('./socketService');
 const {
   getBookingConfirmationTemplate,
   getCancellationTemplate,
@@ -74,11 +75,14 @@ async function sendEmailWithTracking({ to, subject, html, userId, type, metadata
       html,
     });
 
-    // 3. On success, update Notification record
+    // 3. On success, update Notification record and emit live socket event
     if (notification) {
       notification.status = 'sent';
       notification.sentAt = new Date();
       await notification.save();
+      emitNotification(userId, notification);
+    } else if (userId) {
+      emitNotification(userId, { type, title: subject, message: `Notification: ${subject}` });
     }
 
     return {
