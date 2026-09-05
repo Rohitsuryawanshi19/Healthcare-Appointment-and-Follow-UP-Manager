@@ -24,4 +24,10 @@ export const authService = {
     const res = await api.get('/auth/me');
     return res.data;
   },
+
+  // Authenticate or register with Google ID token
+  async googleAuth(idToken) {
+    const res = await api.post('/auth/google', { idToken });
+    return res.data;
+  },
 };

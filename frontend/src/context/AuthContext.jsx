@@ -45,6 +45,15 @@ export function AuthProvider({ children }) {
     return res;
   };
 
+  // Google login/signup handler
+  const googleLogin = async (idToken) => {
+    const res = await authService.googleAuth(idToken);
+    if (res?.data?.user) {
+      setUser(res.data.user);
+    }
+    return res;
+  };
+
   // Logout handler
   const logout = async () => {
     try {
@@ -63,6 +72,7 @@ export function AuthProvider({ children }) {
     loading,
     login,
     register,
+    googleLogin,
     logout,
     checkAuth,
   };

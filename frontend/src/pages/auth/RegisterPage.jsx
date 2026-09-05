@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { User, Mail, Phone, Lock, AlertCircle, ArrowRight, ShieldCheck, Heart } from 'lucide-react';
+import { GoogleLogin } from '@react-oauth/google';
+import { User, Mail, Phone, Lock, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -26,7 +27,7 @@ const registerSchema = z
   });
 
 export default function RegisterPage() {
-  const { register: registerAuth } = useAuth();
+  const { register: registerAuth, googleLogin } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -60,15 +61,55 @@ export default function RegisterPage() {
       });
       toast({
         title: 'Registration Complete',
-        description: 'Your patient account has been created successfully.',
+        description: `Welcome to CareFlow, ${res?.data?.user?.name || 'Patient'}!`,
         variant: 'success',
       });
-      navigate('/', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setServerError(err.message || 'Registration failed. Please verify your details.');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse?.credential) {
+      toast({
+        title: 'Google Sign-Up Failed',
+        description: 'No credential token received from Google.',
+        variant: 'error',
+      });
+      return;
+    }
+
+    setServerError('');
+    setIsSubmitting(true);
+    try {
+      const res = await googleLogin(credentialResponse.credential);
+      toast({
+        title: 'Welcome to CareFlow',
+        description: `Account created for ${res?.data?.user?.name}`,
+        variant: 'success',
+      });
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      setServerError(err.message || 'Google registration failed. Please try again.');
+      toast({
+        title: 'Google Sign-Up Error',
+        description: err.message || 'Registration failed',
+        variant: 'error',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    toast({
+      title: 'Google Sign-Up Failed',
+      description: 'Could not connect with Google Identity Services.',
+      variant: 'error',
+    });
   };
 
   return (
@@ -93,6 +134,31 @@ export default function RegisterPage() {
           <span>{serverError}</span>
         </div>
       )}
+
+      {/* Google Sign-Up Button */}
+      <div className="flex justify-center w-full">
+        <GoogleLogin
+          onSuccess={handleGoogleSuccess}
+          onError={handleGoogleError}
+          theme="outline"
+          size="large"
+          text="signup_with"
+          shape="rectangular"
+          width="100%"
+        />
+      </div>
+
+      {/* Divider */}
+      <div className="relative my-4">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-slate-200" />
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-white px-3 text-slate-400 font-semibold tracking-wider">
+            Or register with email
+          </span>
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-3.5 text-left">
         <div className="space-y-1.5">

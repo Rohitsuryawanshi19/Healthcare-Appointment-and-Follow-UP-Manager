@@ -10,6 +10,7 @@ const { loginSchema, registerSchema } = require('../validators');
 // Public Auth Endpoints (Protected by Rate Limiters & Zod Validation)
 router.post('/register', registerLimiter, validate(registerSchema), authController.register);
 router.post('/login', authLimiter, validate(loginSchema), authController.login);
+router.post('/google', authLimiter, authController.googleAuth);
 router.post('/logout', authController.logout);
 
 // Protected Auth Endpoints

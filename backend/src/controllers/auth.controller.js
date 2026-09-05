@@ -1,5 +1,7 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User.model');
+const { verifyGoogleIdToken } = require('../services/googleAuthService');
 
 // Helper to generate JWT and set secure HTTP-only cookie
 const sendTokenResponse = (user, statusCode, res, message = 'Success') => {
@@ -28,6 +30,8 @@ const sendTokenResponse = (user, statusCode, res, message = 'Success') => {
           email: user.email,
           phone: user.phone,
           role: user.role,
+          authProvider: user.authProvider || 'local',
+          avatarUrl: user.avatarUrl || '',
           createdAt: user.createdAt,
         },
         token, // Also return in body for clients preferring header auth
@@ -72,6 +76,7 @@ exports.register = async (req, res, next) => {
       password,
       phone: phone ? phone.trim() : '',
       role: 'patient',
+      authProvider: 'local',
     });
 
     sendTokenResponse(user, 201, res, 'Registration successful. Welcome to CareFlow!');
@@ -118,6 +123,83 @@ exports.login = async (req, res, next) => {
   }
 };
 
+// @desc    Authenticate or Register via Google ID Token
+// @route   POST /api/auth/google
+// @access  Public
+exports.googleAuth = async (req, res, next) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid Google ID token.',
+      });
+    }
+
+    let googlePayload;
+    try {
+      googlePayload = await verifyGoogleIdToken(idToken);
+    } catch (verifyErr) {
+      return res.status(401).json({
+        success: false,
+        message: verifyErr.message || 'Google authentication verification failed.',
+      });
+    }
+
+    const { googleId, email, name, avatarUrl } = googlePayload;
+
+    // 1. Check if user already exists with this googleId or email
+    let user = await User.findOne({
+      $or: [{ googleId }, { email }],
+    });
+
+    if (user) {
+      let isModified = false;
+
+      // Link googleId if existing user signed in with password previously
+      if (!user.googleId) {
+        user.googleId = googleId;
+        isModified = true;
+      }
+
+      // Update avatar if not already set
+      if (!user.avatarUrl && avatarUrl) {
+        user.avatarUrl = avatarUrl;
+        isModified = true;
+      }
+
+      if (isModified) {
+        await user.save();
+      }
+
+      return sendTokenResponse(user, 200, res, 'Google sign-in successful.');
+    }
+
+    // 2. If new user: create account strictly with 'patient' role
+    const unusablePasswordHash = crypto.randomBytes(32).toString('hex');
+
+    user = await User.create({
+      name: name || 'CareFlow Patient',
+      email,
+      role: 'patient', // Server-enforced: Google signup only grants patient role
+      authProvider: 'google',
+      googleId,
+      avatarUrl: avatarUrl || '',
+      password: unusablePasswordHash,
+    });
+
+    return sendTokenResponse(
+      user,
+      201,
+      res,
+      'Google registration successful. Welcome to CareFlow!'
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Log user out & clear cookie
 // @route   POST /api/auth/logout
 // @access  Public
@@ -146,6 +228,8 @@ exports.getMe = async (req, res) => {
         email: req.user.email,
         phone: req.user.phone,
         role: req.user.role,
+        authProvider: req.user.authProvider || 'local',
+        avatarUrl: req.user.avatarUrl || '',
         createdAt: req.user.createdAt,
         updatedAt: req.user.updatedAt,
       },

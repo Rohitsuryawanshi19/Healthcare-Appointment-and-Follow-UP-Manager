@@ -45,7 +45,12 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: [true, 'Please provide a password'],
+      required: [
+        function () {
+          return this.authProvider === 'local';
+        },
+        'Password is required for local accounts',
+      ],
       minlength: [6, 'Password must be at least 6 characters long'],
       select: false, // Don't return password by default in queries
     },
@@ -61,6 +66,25 @@ const userSchema = new mongoose.Schema(
         message: '{VALUE} is not a valid role',
       },
       default: 'patient',
+    },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    authProvider: {
+      type: String,
+      enum: {
+        values: ['local', 'google'],
+        message: '{VALUE} is not a valid auth provider',
+      },
+      default: 'local',
+    },
+    avatarUrl: {
+      type: String,
+      default: '',
+      trim: true,
     },
     googleCalendar: {
       type: googleCalendarSchema,
