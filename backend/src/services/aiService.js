@@ -1,18 +1,59 @@
-const PRE_VISIT_DISCLAIMER = 'AI-generated informational summary. This does not constitute a medical diagnosis.';
-const POST_VISIT_DISCLAIMER = "This summary is generated from your clinician's notes. Follow your clinician's instructions.";
+const {
+  AI_MODEL,
+  getGenAIClient,
+  medicalSafetySettings,
+  preVisitResponseSchema,
+  postVisitResponseSchema,
+  defaultGenerationConfig,
+} = require('../config/aiConfig');
+
+const PRE_VISIT_DISCLAIMER =
+  'AI-generated informational summary. This does not constitute a medical diagnosis.';
+const POST_VISIT_DISCLAIMER =
+  "This summary is generated from your clinician's notes. Follow your clinician's instructions.";
+const CHAT_SYSTEM_INSTRUCTION =
+  `You are CareFlow AI, an intelligent, empathetic pre-consultation symptom exploration assistant.
+Guidelines:
+1. Help the patient describe and organize their symptoms clearly before they book or attend their doctor visit.
+2. Discuss general health information and symptom urgency (Low, Moderate, Urgent).
+3. NEVER provide a definitive medical diagnosis, and NEVER prescribe or suggest specific medication dosages.
+4. If the patient mentions emergency red-flag symptoms (such as acute chest pain radiating to the arm, sudden facial drooping/speech slurring, severe respiratory distress, or sudden loss of vision), immediately advise them to contact emergency emergency services or visit the nearest emergency room without delay.
+5. Always advise consulting a qualified doctor through CareFlow for personalized diagnostic evaluation.
+6. Keep your tone professional, concise, reassuring, and clear.`;
 
 /**
  * Intelligent Rule-based Medical Heuristic Fallback Engine for Pre-Visit Triage
  */
-function generateHeuristicFallback(symptomsText = '') {
+function generateHeuristicFallback(symptomsText = '', reason = 'Heuristic fallback') {
   const text = (symptomsText || '').toLowerCase();
 
   let urgency = 'Low';
   let chiefComplaint = 'General medical inquiry and wellness checkup.';
   const suggestedQuestions = [];
 
-  const highRiskKeywords = ['chest pain', 'shortness of breath', 'difficulty breathing', 'palpitation', 'fainting', 'severe headache', 'sudden weakness', 'numbness', 'vision loss'];
-  const mediumRiskKeywords = ['migraine', 'fever', 'persistent cough', 'vomiting', 'abdominal pain', 'rash', 'dizziness', 'joint pain', 'hypertension', 'blood pressure'];
+  const highRiskKeywords = [
+    'chest pain',
+    'shortness of breath',
+    'difficulty breathing',
+    'palpitation',
+    'fainting',
+    'severe headache',
+    'sudden weakness',
+    'numbness',
+    'vision loss',
+  ];
+  const mediumRiskKeywords = [
+    'migraine',
+    'fever',
+    'persistent cough',
+    'vomiting',
+    'abdominal pain',
+    'rash',
+    'dizziness',
+    'joint pain',
+    'hypertension',
+    'blood pressure',
+  ];
 
   const hasHighRisk = highRiskKeywords.some((k) => text.includes(k));
   const hasMediumRisk = mediumRiskKeywords.some((k) => text.includes(k));
@@ -45,30 +86,36 @@ function generateHeuristicFallback(symptomsText = '') {
     suggestedQuestions: suggestedQuestions.slice(0, 3),
     disclaimer: PRE_VISIT_DISCLAIMER,
     status: 'fallback',
+    fallbackReason: reason,
   };
 }
 
 /**
  * Intelligent Rule-based Heuristic Engine for Post-Visit Patient Care Summary
- * Formats doctor observations and prescription faithfully without altering treatment.
  */
-function generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines = [], followUpInstructions }) {
+function generatePostVisitHeuristic(
+  { diagnosis, doctorNotes, medicines = [], followUpInstructions },
+  reason = 'Heuristic fallback'
+) {
   const whatWasDiscussed = diagnosis
     ? `Your doctor assessed your symptoms and diagnosed: ${diagnosis}. Notes: ${doctorNotes || 'Consultation concluded.'}`
     : `Clinical consultation summary: ${doctorNotes || 'Standard medical assessment conducted.'}`;
 
-  const medicationSchedule = Array.isArray(medicines) && medicines.length > 0
-    ? medicines.map((m) => {
-        const timingFormatted = m.timing ? ` (${m.timing.replace('_', ' ')})` : '';
-        const instrFormatted = m.instructions ? ` - ${m.instructions}` : '';
-        return `${m.name} ${m.dosage}: Take ${m.frequency} for ${m.duration}${timingFormatted}${instrFormatted}.`;
-      })
-    : ['No new prescription medications prescribed during this visit.'];
+  const medicationSchedule =
+    Array.isArray(medicines) && medicines.length > 0
+      ? medicines.map((m) => {
+          const timingFormatted = m.timing ? ` (${m.timing.replace('_', ' ')})` : '';
+          const instrFormatted = m.instructions ? ` - ${m.instructions}` : '';
+          return `${m.name} ${m.dosage}: Take ${m.frequency} for ${m.duration}${timingFormatted}${instrFormatted}.`;
+        })
+      : ['No new prescription medications prescribed during this visit.'];
 
   const importantInstructions = [
     'Take all prescribed medications precisely as directed by your physician.',
     'Ensure adequate rest, balanced hydration, and avoid strenuous overexertion.',
-    followUpInstructions ? `Follow clinician guidance: ${followUpInstructions}` : 'Contact the clinic if symptoms do not improve within expected duration.',
+    followUpInstructions
+      ? `Follow clinician guidance: ${followUpInstructions}`
+      : 'Contact the clinic if symptoms do not improve within expected duration.',
   ];
 
   const followUpSteps = followUpInstructions
@@ -86,13 +133,37 @@ function generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines = [], fo
     whenToSeekHelp,
     disclaimer: POST_VISIT_DISCLAIMER,
     status: 'fallback',
+    fallbackReason: reason,
   };
 }
 
 /**
- * Generates structured AI pre-visit symptom summary
+ * Helper to run an async operation with an Abort timeout
+ */
+async function withTimeout(promise, ms = 8000, correlationId = '') {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`AI generation timed out after ${ms}ms [correlationId: ${correlationId}]`));
+    }, ms);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+/**
+ * Generates structured AI pre-visit symptom summary using official @google/genai SDK
  */
 async function generatePreVisitSummary(symptoms, options = {}) {
+  const correlationId = options.correlationId || `pre_${Date.now()}`;
+
   if (!symptoms || typeof symptoms !== 'string' || symptoms.trim() === '') {
     return {
       urgency: 'Low',
@@ -108,72 +179,40 @@ async function generatePreVisitSummary(symptoms, options = {}) {
   }
 
   if (options.forceTimeout) {
-    return generateHeuristicFallback(symptoms);
+    return generateHeuristicFallback(symptoms, 'Simulated timeout');
   }
 
   if (options.forceMalformed) {
-    return generateHeuristicFallback(symptoms);
+    return generateHeuristicFallback(symptoms, 'Simulated malformed response');
   }
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
-  if (!apiKey) {
-    return generateHeuristicFallback(symptoms);
+  const aiClient = getGenAIClient();
+  if (!aiClient) {
+    return generateHeuristicFallback(symptoms, 'GEMINI_API_KEY not configured');
   }
 
-  const promptText = `Analyze these symptoms and return:
-* urgency level: Low / Medium / High
-* chief complaint
-* three suggested questions for the doctor
-
-Symptoms:
-${symptoms}
-
-Important safety behavior:
-The AI must NOT claim to diagnose the patient.
-Add this disclaimer:
-"${PRE_VISIT_DISCLAIMER}"
-
-Respond ONLY with valid JSON matching this exact structure:
-{
-  "urgency": "Low" | "Medium" | "High",
-  "chiefComplaint": "Concise summary of main complaint",
-  "suggestedQuestions": [
-    "Question 1 for doctor",
-    "Question 2 for doctor",
-    "Question 3 for doctor"
-  ],
-  "disclaimer": "${PRE_VISIT_DISCLAIMER}"
-}`;
+  const promptText = `Analyze these patient symptoms and extract the triage urgency, chief complaint summary, and 3 clinical inquiries for the doctor:\n\nPatient Symptoms:\n${symptoms}`;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const aiCall = aiClient.models.generateContent({
+      model: AI_MODEL,
+      contents: promptText,
+      config: {
+        ...defaultGenerationConfig,
+        safetySettings: medicalSafetySettings,
+        responseMimeType: 'application/json',
+        responseSchema: preVisitResponseSchema,
+      },
+    });
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: {
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
+    const response = await withTimeout(aiCall, 8000, correlationId);
+    const rawText = response.text;
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      return generateHeuristicFallback(symptoms);
+    if (!rawText) {
+      throw new Error('Empty text received from AI model');
     }
 
-    const data = await response.json();
-    const rawContent = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = JSON.parse(rawContent);
+    const parsed = JSON.parse(rawText);
 
     let urgency = 'Low';
     if (parsed.urgency) {
@@ -185,117 +224,165 @@ Respond ONLY with valid JSON matching this exact structure:
 
     return {
       urgency,
-      chiefComplaint: parsed.chiefComplaint || symptoms.substring(0, 100),
-      suggestedQuestions: Array.isArray(parsed.suggestedQuestions)
+      chiefComplaint: parsed.chiefComplaint || symptoms.substring(0, 120),
+      suggestedQuestions: Array.isArray(parsed.suggestedQuestions) && parsed.suggestedQuestions.length >= 3
         ? parsed.suggestedQuestions.slice(0, 3)
         : [
             'How long have you experienced these symptoms?',
             'What makes the symptoms better or worse?',
             'Are you taking any current medications?',
           ],
-      disclaimer: PRE_VISIT_DISCLAIMER,
+      disclaimer: PRE_VISIT_DISCLAIMER, // Always enforce system disclaimer
       status: 'completed',
-      rawResponse: rawContent.substring(0, 500),
     };
   } catch (error) {
-    return generateHeuristicFallback(symptoms);
+    console.error(`[AI Service Error - ${correlationId}] Pre-visit generation failed:`, error.message);
+    return generateHeuristicFallback(symptoms, error.message);
   }
 }
 
 /**
- * Generates patient-friendly Post-Visit Care Summary
- *
- * @param {Object} clinicalData - { diagnosis, doctorNotes, medicines, followUpInstructions }
- * @param {Object} [options={}] - { forceTimeout, forceMalformed }
- * @returns {Promise<Object>} 5-part structured post-visit summary
+ * Generates patient-friendly Post-Visit Care Summary using official @google/genai SDK
  */
-async function generatePostVisitSummary({ diagnosis, doctorNotes, medicines = [], followUpInstructions }, options = {}) {
+async function generatePostVisitSummary(
+  { diagnosis, doctorNotes, medicines = [], followUpInstructions },
+  options = {}
+) {
+  const correlationId = options.correlationId || `post_${Date.now()}`;
+
   if (options.forceTimeout || options.forceMalformed) {
-    return generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines, followUpInstructions });
+    return generatePostVisitHeuristic(
+      { diagnosis, doctorNotes, medicines, followUpInstructions },
+      options.forceTimeout ? 'Simulated timeout' : 'Simulated malformed response'
+    );
   }
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
-  if (!apiKey) {
-    return generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines, followUpInstructions });
+  const aiClient = getGenAIClient();
+  if (!aiClient) {
+    return generatePostVisitHeuristic(
+      { diagnosis, doctorNotes, medicines, followUpInstructions },
+      'GEMINI_API_KEY not configured'
+    );
   }
 
-  const medsText = Array.isArray(medicines) && medicines.length > 0
-    ? medicines.map((m) => `- ${m.name} (${m.dosage}): ${m.frequency} for ${m.duration}, Timing: ${m.timing || 'after_meal'}. ${m.instructions || ''}`).join('\n')
-    : 'None';
+  const medsText =
+    Array.isArray(medicines) && medicines.length > 0
+      ? medicines
+          .map(
+            (m) =>
+              `- ${m.name} (${m.dosage}): ${m.frequency} for ${m.duration}, Timing: ${m.timing || 'after_meal'}. ${m.instructions || ''}`
+          )
+          .join('\n')
+      : 'None prescribed';
 
-  const promptText = `You are a medical communicator generating a patient-friendly post-visit care plan.
-Summarize the doctor's clinical findings strictly and accurately into plain language.
-Do NOT alter the doctor's prescription or invent treatments.
+  const promptText = `You are a clinical communications specialist. Transform this doctor's consultation notes into a patient-friendly care plan. Do NOT alter medications or diagnoses.
 
-Doctor Assessment / Diagnosis: ${diagnosis || 'Not specified'}
-Doctor Clinical Notes: ${doctorNotes || 'Routine consultation concluded.'}
+Diagnosis: ${diagnosis || 'Clinical evaluation'}
+Doctor Notes: ${doctorNotes || 'Consultation concluded.'}
 Prescribed Medications:
 ${medsText}
-Follow-up Instructions: ${followUpInstructions || 'Standard follow-up as needed.'}
-
-Return a valid JSON object matching this schema:
-{
-  "whatWasDiscussed": "Clear, reassuring plain-language summary of the visit and diagnosis",
-  "medicationSchedule": [
-    "Instruction for medicine 1",
-    "Instruction for medicine 2"
-  ],
-  "importantInstructions": [
-    "Key care instruction 1",
-    "Key care instruction 2"
-  ],
-  "followUpSteps": "Clear follow-up guidance and timeline",
-  "whenToSeekHelp": "Emergency red-flag warning signs that require urgent medical attention",
-  "disclaimer": "${POST_VISIT_DISCLAIMER}"
-}`;
+Follow-up Instructions: ${followUpInstructions || 'Standard monitoring'}`;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const aiCall = aiClient.models.generateContent({
+      model: AI_MODEL,
+      contents: promptText,
+      config: {
+        ...defaultGenerationConfig,
+        safetySettings: medicalSafetySettings,
+        responseMimeType: 'application/json',
+        responseSchema: postVisitResponseSchema,
+      },
+    });
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: {
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
+    const response = await withTimeout(aiCall, 8000, correlationId);
+    const rawText = response.text;
 
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      return generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines, followUpInstructions });
+    if (!rawText) {
+      throw new Error('Empty response received from AI model');
     }
 
-    const data = await response.json();
-    const rawContent = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = JSON.parse(rawContent);
+    const parsed = JSON.parse(rawText);
 
     return {
       whatWasDiscussed: parsed.whatWasDiscussed || 'Clinical visit concluded with tailored health guidance.',
       medicationSchedule: Array.isArray(parsed.medicationSchedule) ? parsed.medicationSchedule : [],
       importantInstructions: Array.isArray(parsed.importantInstructions) ? parsed.importantInstructions : [],
-      followUpSteps: parsed.followUpSteps || followUpInstructions || 'Follow up as directed.',
-      whenToSeekHelp: parsed.whenToSeekHelp || 'Seek immediate medical attention if symptoms worsen suddenly.',
-      disclaimer: POST_VISIT_DISCLAIMER,
+      followUpSteps: parsed.followUpSteps || followUpInstructions || 'Follow up with your clinician as directed.',
+      whenToSeekHelp:
+        parsed.whenToSeekHelp || 'Seek immediate medical attention if symptoms worsen suddenly or red-flag signs appear.',
+      disclaimer: POST_VISIT_DISCLAIMER, // Always enforce system disclaimer
       status: 'completed',
     };
   } catch (error) {
-    return generatePostVisitHeuristic({ diagnosis, doctorNotes, medicines, followUpInstructions });
+    console.error(`[AI Service Error - ${correlationId}] Post-visit generation failed:`, error.message);
+    return generatePostVisitHeuristic(
+      { diagnosis, doctorNotes, medicines, followUpInstructions },
+      error.message
+    );
+  }
+}
+
+/**
+ * Interactive streaming symptom triage assistant for patients before booking
+ * Yields text tokens in real time
+ */
+async function* streamPatientChat({ message, history = [] }, options = {}) {
+  const correlationId = options.correlationId || `chat_${Date.now()}`;
+  const aiClient = getGenAIClient();
+
+  if (!aiClient) {
+    // Graceful offline fallback stream
+    const fallbackResponse = `Thank you for sharing your symptoms: "${message}".\n\nCareFlow Recommendation:\n• For accurate clinical diagnosis, please schedule a consultation with one of our verified specialists.\n• If you are experiencing sudden severe chest pain, shortness of breath, or numbness, please seek emergency medical attention immediately.\n\n*Disclaimer: CareFlow AI provides general health information and is not a substitute for professional clinical advice.*`;
+    for (const char of fallbackResponse.split(' ')) {
+      yield char + ' ';
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return;
+  }
+
+  // Build conversation history (strictly capped to last 10 turns)
+  const formattedContents = [];
+
+  const recentHistory = Array.isArray(history) ? history.slice(-10) : [];
+  for (const turn of recentHistory) {
+    if (turn.role === 'user' || turn.role === 'patient') {
+      formattedContents.push({ role: 'user', parts: [{ text: String(turn.content || turn.message) }] });
+    } else if (turn.role === 'model' || turn.role === 'assistant') {
+      formattedContents.push({ role: 'model', parts: [{ text: String(turn.content || turn.message) }] });
+    }
+  }
+
+  // Append current user message
+  formattedContents.push({ role: 'user', parts: [{ text: message }] });
+
+  try {
+    const stream = await aiClient.models.generateContentStream({
+      model: AI_MODEL,
+      contents: formattedContents,
+      config: {
+        systemInstruction: CHAT_SYSTEM_INSTRUCTION,
+        temperature: 0.4,
+        maxOutputTokens: 800,
+        safetySettings: medicalSafetySettings,
+      },
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.text) {
+        yield chunk.text;
+      }
+    }
+  } catch (error) {
+    console.error(`[AI Chat Stream Error - ${correlationId}]:`, error.message);
+    yield `\n\n[Notice: Connectivity issue. For your symptoms, please book an appointment with a verified CareFlow doctor for a comprehensive medical assessment.]\n\n*${PRE_VISIT_DISCLAIMER}*`;
   }
 }
 
 module.exports = {
   generatePreVisitSummary,
   generatePostVisitSummary,
+  streamPatientChat,
   generateHeuristicFallback,
   generatePostVisitHeuristic,
   PRE_VISIT_DISCLAIMER,

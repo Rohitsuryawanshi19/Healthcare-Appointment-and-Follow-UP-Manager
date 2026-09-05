@@ -3,6 +3,7 @@ const { Appointment, Prescription } = require('../models');
 const {
   generatePreVisitSummary,
   generatePostVisitSummary,
+  streamPatientChat,
   PRE_VISIT_DISCLAIMER,
   POST_VISIT_DISCLAIMER,
 } = require('../services/aiService');
@@ -21,7 +22,7 @@ exports.getPreVisitSummary = async (req, res, next) => {
       });
     }
 
-    const options = {};
+    const options = { correlationId: `pre_${req.user?._id || 'anon'}_${Date.now()}` };
     if (mockMode === 'timeout') options.forceTimeout = true;
     if (mockMode === 'malformed') options.forceMalformed = true;
 
@@ -107,7 +108,7 @@ exports.getPostVisitSummary = async (req, res, next) => {
       }
     }
 
-    const options = {};
+    const options = { correlationId: `post_${req.user?._id || 'anon'}_${Date.now()}` };
     if (mockMode === 'timeout') options.forceTimeout = true;
     if (mockMode === 'malformed') options.forceMalformed = true;
 
@@ -154,5 +155,62 @@ exports.getPostVisitSummary = async (req, res, next) => {
         status: 'fallback',
       },
     });
+  }
+};
+
+// @desc    Interactive streaming AI symptom exploration chat for patients
+// @route   POST /api/ai/chat
+// @access  Public / Authenticated (Protected with aiChatLimiter)
+exports.chatWithPatient = async (req, res) => {
+  const { message, history } = req.body;
+
+  // 1. Guardrail: Validate message existence
+  if (!message || typeof message !== 'string' || message.trim() === '') {
+    return res.status(400).json({
+      success: false,
+      message: 'Message text is required.',
+    });
+  }
+
+  // 2. Guardrail: Max message length (2,000 characters)
+  if (message.length > 2000) {
+    return res.status(400).json({
+      success: false,
+      message: 'Message exceeds maximum allowable length of 2000 characters.',
+    });
+  }
+
+  // 3. Guardrail: Cap conversation history turns
+  const sanitizedHistory = Array.isArray(history) ? history.slice(-10) : [];
+
+  // 4. Set SSE Streaming Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (res.flushHeaders) res.flushHeaders();
+
+  const correlationId = `chat_${req.user?._id || 'anon'}_${Date.now()}`;
+
+  try {
+    for await (const chunk of streamPatientChat(
+      { message: message.trim(), history: sanitizedHistory },
+      { correlationId }
+    )) {
+      res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (error) {
+    console.error(`[AI Chat Stream Error - ${correlationId}]:`, error);
+    res.write(
+      `data: ${JSON.stringify({
+        error: true,
+        text: '\n[Stream interrupted. Please consult a doctor for urgent symptoms.]',
+        done: true,
+      })}\n\n`
+    );
+    res.end();
   }
 };

@@ -44,8 +44,23 @@ const generalApiLimiter = rateLimit({
   },
 });
 
+/**
+ * Strict Rate Limiter for Interactive AI Chat (prevents model resource abuse)
+ */
+const aiChatLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 1000 : 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'AI assistant rate limit reached. Please wait a few minutes before sending more queries.',
+  },
+});
+
 module.exports = {
   authLimiter,
   registerLimiter,
   generalApiLimiter,
+  aiChatLimiter,
 };

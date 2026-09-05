@@ -32,6 +32,7 @@ import { LoadingState } from '../../components/ui/LoadingState';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { useToast } from '../../components/ui/Toast';
 import { PageTransition } from '../../components/ui/PageTransition';
+import { AiSymptomChatWidget } from '../../components/patient/AiSymptomChatWidget';
 
 export default function PatientBookingPage() {
   const { doctorId } = useParams();
@@ -316,6 +317,9 @@ export default function PatientBookingPage() {
           );
         })}
       </div>
+ 
+      {/* Optional AI Symptom Exploration Chat Widget */}
+      <AiSymptomChatWidget />
 
       <AnimatePresence mode="wait">
         {/* STEP 1: Select Doctor */}
