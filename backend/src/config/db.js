@@ -11,23 +11,25 @@ const connectDB = async () => {
       minPoolSize: 2,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
-      autoIndex: true,
+      autoIndex: process.env.NODE_ENV !== 'production',
     });
 
     logger.info({ host: conn.connection.host }, 'MongoDB connected successfully');
 
-    // Synchronize Mongoose compound unique indexes to guarantee database-level concurrency protection
-    const { Appointment, Doctor, User, DoctorLeave, Notification, Prescription } = require('../models');
-    await Promise.all([
-      Appointment.syncIndexes(),
-      Doctor.syncIndexes(),
-      User.syncIndexes(),
-      DoctorLeave.syncIndexes(),
-      Notification.syncIndexes(),
-      Prescription.syncIndexes(),
-    ]);
+    // Synchronize Mongoose compound unique indexes to guarantee database-level concurrency protection in non-production
+    if (process.env.NODE_ENV !== 'production') {
+      const { Appointment, Doctor, User, DoctorLeave, Notification, Prescription } = require('../models');
+      await Promise.all([
+        Appointment.syncIndexes(),
+        Doctor.syncIndexes(),
+        User.syncIndexes(),
+        DoctorLeave.syncIndexes(),
+        Notification.syncIndexes(),
+        Prescription.syncIndexes(),
+      ]).catch((err) => logger.warn({ err: err.message }, 'Non-fatal index sync warning'));
 
-    logger.debug('MongoDB Compound Unique Indexes Synchronized');
+      logger.debug('MongoDB Compound Unique Indexes Synchronized');
+    }
 
     // Attach connection lifecycle event handlers
     mongoose.connection.on('error', (err) => {
