@@ -24,8 +24,10 @@ const calendarRoutes = require('./routes/calendar.routes');
 
 const app = express();
 
-// 2. Connect Database
-connectDB();
+// 2. Connect Database (skipped in test mode; managed by test harness)
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
+}
 
 // 3. Request Correlation ID & Structured Logging
 app.use(correlationIdMiddleware);
@@ -234,9 +236,11 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
-  startMedicationReminderJob();
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
+    startMedicationReminderJob();
+  });
+}
 
 module.exports = app;

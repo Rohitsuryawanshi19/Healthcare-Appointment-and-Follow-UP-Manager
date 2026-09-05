@@ -20,7 +20,8 @@ const validate = (schema) => async (req, res, next) => {
     next();
   } catch (error) {
     if (error instanceof ZodError) {
-      const formattedErrors = error.errors.map((err) => ({
+      const issues = error.issues || error.errors || [];
+      const formattedErrors = issues.map((err) => ({
         field: err.path.slice(1).join('.'),
         message: err.message,
       }));

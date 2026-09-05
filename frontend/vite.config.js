@@ -26,5 +26,11 @@ export default defineConfig({
     target: 'esnext',
     outDir: 'dist',
     chunkSizeWarningLimit: 1000,
-  }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+    css: false,
+  },
 });
