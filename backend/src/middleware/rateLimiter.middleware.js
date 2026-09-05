@@ -1,13 +1,16 @@
 const rateLimit = require('express-rate-limit');
 
-const isTest = process.env.NODE_ENV === 'test' || !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
+const isTest =
+  process.env.NODE_ENV === 'test' ||
+  !process.env.NODE_ENV ||
+  process.env.NODE_ENV === 'development';
 
 /**
  * Strict Rate Limiter for Authentication Endpoints (Brute-force protection)
  */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isTest ? 1000 : 20, // High ceiling in local dev/test, strict in production
+  max: isTest ? 1000 : 20, // 20 attempts per 15 mins in production
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -45,11 +48,11 @@ const generalApiLimiter = rateLimit({
 });
 
 /**
- * Strict Rate Limiter for Interactive AI Chat (prevents model resource abuse)
+ * Strict Rate Limiter for Interactive AI Chat (prevents token / cost exhaustion)
  */
 const aiChatLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: isTest ? 1000 : 30,
+  max: isTest ? 1000 : 30, // 30 prompts per 15 min window
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -58,9 +61,24 @@ const aiChatLimiter = rateLimit({
   },
 });
 
+/**
+ * Rate Limiter for Pre-Visit & Post-Visit AI Summaries
+ */
+const aiSummaryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 1000 : 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'AI summary generation limit reached. Please wait a few minutes.',
+  },
+});
+
 module.exports = {
   authLimiter,
   registerLimiter,
   generalApiLimiter,
   aiChatLimiter,
+  aiSummaryLimiter,
 };

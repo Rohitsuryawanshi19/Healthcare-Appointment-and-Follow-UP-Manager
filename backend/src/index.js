@@ -4,8 +4,13 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
+// 1. Fast-Fail Environment Variable Validation
+const { validateEnv } = require('./config/envValidator');
+validateEnv();
+
 const connectDB = require('./config/db');
 const { startMedicationReminderJob } = require('./jobs/medicationReminderJob');
+const { correlationIdMiddleware } = require('./middleware/correlationId.middleware');
 const { generalApiLimiter } = require('./middleware/rateLimiter.middleware');
 
 const authRoutes = require('./routes/auth.routes');
@@ -19,54 +24,105 @@ const calendarRoutes = require('./routes/calendar.routes');
 
 const app = express();
 
-// 1. Connect Database
+// 2. Connect Database
 connectDB();
 
-// 2. HTTP Security Headers with Helmet
+// 3. Request Correlation ID & Structured Logging
+app.use(correlationIdMiddleware);
+
+// 4. Production-Grade HTTP Security Headers with Helmet & Content Security Policy
+const isProd = process.env.NODE_ENV === 'production';
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://accounts.google.com',
+          'https://apis.google.com',
+          'https://ssl.gstatic.com',
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: [
+          "'self'",
+          'data:',
+          'https://lh3.googleusercontent.com',
+          'https://avatars.githubusercontent.com',
+        ],
+        connectSrc: [
+          "'self'",
+          'https://accounts.google.com',
+          'https://generativelanguage.googleapis.com',
+          ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+          ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+        ],
+        frameSrc: ["'self'", 'https://accounts.google.com'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: isProd ? [] : null,
+      },
+    },
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   })
 );
 
-// 3. Secure CORS Configuration
-const envOrigins = (process.env.TRUSTED_ORIGINS || process.env.CLIENT_URL || '')
+// 5. Secure, Explicit CORS Configuration
+const rawOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  process.env.ALLOWED_ORIGINS,
+  process.env.TRUSTED_ORIGINS,
+]
+  .filter(Boolean)
+  .join(',');
+
+const envOrigins = rawOrigins
   .split(',')
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/\/$/, ''))
   .filter(Boolean);
 
-const allowedOrigins = [
-  ...envOrigins,
+const defaultDevOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
 ];
 
+const allowedOrigins = Array.from(new Set([...envOrigins, ...defaultDevOrigins]));
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server)
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests with no origin (curl, server-to-server, mobile app)
+      if (!origin) return callback(null, true);
+
+      const normalized = origin.trim().replace(/\/$/, '');
+      if (allowedOrigins.includes(normalized)) {
         return callback(null, true);
       }
-      return callback(new Error('Blocked by CORS policy: Origin not allowed.'));
+
+      console.warn(`[CORS Blocked] Origin not in allowed whitelist: '${origin}'`);
+      return callback(new Error(`Blocked by CORS policy: Origin '${origin}' is not authorized.`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Correlation-ID'],
   })
 );
 
-// 4. Rate Limiting for General API protection
+// 6. Rate Limiting for General API Surface
 app.use('/api', generalApiLimiter);
 
-// 5. Body Parsers with Memory Limits & Cookie Parser
+// 7. Body Parsers with Memory Limits & Cookie Parser
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
-// 6. Mount API Routes
+// 8. Mount API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/doctor', doctorRoutes);
@@ -81,24 +137,31 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'CareFlow API is running securely',
+    environment: process.env.NODE_ENV || 'development',
+    correlationId: req.correlationId,
+    timestamp: new Date().toISOString(),
   });
 });
 
-// 7. 404 Route Handler
+// 9. 404 Route Handler
 app.use((req, res, next) => {
   res.status(404).json({
     success: false,
     message: `API Route ${req.originalUrl} not found`,
+    correlationId: req.correlationId,
   });
 });
 
-// 8. Robust Centralized Error Handling Middleware
+// 10. Centralized Production-Hardened Error Handling Middleware
 app.use((err, req, res, next) => {
-  // Handle Malformed JSON payload syntax errors
+  const correlationId = req.correlationId || 'unknown';
+
+  // Handle Malformed JSON payload
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
       success: false,
       message: 'Malformed JSON payload in request body.',
+      correlationId,
     });
   }
 
@@ -106,7 +169,8 @@ app.use((err, req, res, next) => {
   if (err.name === 'CastError') {
     return res.status(400).json({
       success: false,
-      message: `Invalid ID format: '${err.value}' is not a valid 24-character resource identifier.`,
+      message: `Invalid identifier format for '${err.path}'.`,
+      correlationId,
     });
   }
 
@@ -116,6 +180,7 @@ app.use((err, req, res, next) => {
     return res.status(409).json({
       success: false,
       message: `Duplicate entry conflict: A record with this ${field} already exists.`,
+      correlationId,
     });
   }
 
@@ -126,6 +191,7 @@ app.use((err, req, res, next) => {
       success: false,
       message: messages.join(', '),
       errors: messages,
+      correlationId,
     });
   }
 
@@ -134,29 +200,42 @@ app.use((err, req, res, next) => {
     return res.status(401).json({
       success: false,
       message: 'Invalid session token. Please log in again.',
+      correlationId,
     });
   }
 
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       success: false,
-      message: 'Your session has expired. Please log in again.',
+      message: 'Your session has expired. Please refresh your session.',
+      correlationId,
     });
   }
 
-  // Default catch-all
+  // CORS error handler
+  if (err.message && err.message.includes('Blocked by CORS policy')) {
+    return res.status(403).json({
+      success: false,
+      message: err.message,
+      correlationId,
+    });
+  }
+
+  // Default Catch-All: never leak internal stack traces in production
   const statusCode = err.status || 500;
-  const isProd = process.env.NODE_ENV === 'production';
+  console.error(`[Unhandled Error - ${correlationId}]:`, err);
 
   res.status(statusCode).json({
     success: false,
     message: isProd && statusCode === 500 ? 'Internal Server Error' : err.message || 'Internal Server Error',
+    correlationId,
+    ...(isProd ? {} : { stack: err.stack }),
   });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`CareFlow API server running on port ${PORT}`);
+  console.log(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
   startMedicationReminderJob();
 });
 

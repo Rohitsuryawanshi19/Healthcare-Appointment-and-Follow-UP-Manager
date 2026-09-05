@@ -1,25 +1,21 @@
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const User = require('../models/User.model');
 const { verifyGoogleIdToken } = require('../services/googleAuthService');
+const {
+  getCookieConfig,
+  generateTokens,
+  verifyRefreshToken,
+} = require('../config/authConfig');
 
-// Helper to generate JWT and set secure HTTP-only cookie
+// Helper to generate JWT and set secure HTTP-only cookies
 const sendTokenResponse = (user, statusCode, res, message = 'Success') => {
-  const secret = process.env.JWT_SECRET || 'super_secret_jwt_key_careflow_min_32_chars_long';
-  const token = jwt.sign({ id: user._id, role: user.role }, secret, {
-    expiresIn: '7d',
-  });
-
-  const cookieOptions = {
-    expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-  };
+  const { accessToken, refreshToken } = generateTokens(user);
+  const { accessCookie, refreshCookie } = getCookieConfig();
 
   res
     .status(statusCode)
-    .cookie('token', token, cookieOptions)
+    .cookie('token', accessToken, accessCookie)
+    .cookie('refreshToken', refreshToken, refreshCookie)
     .json({
       success: true,
       message,
@@ -34,7 +30,8 @@ const sendTokenResponse = (user, statusCode, res, message = 'Success') => {
           avatarUrl: user.avatarUrl || '',
           createdAt: user.createdAt,
         },
-        token, // Also return in body for clients preferring header auth
+        token: accessToken, // 15-minute short-lived access token
+        refreshToken, // 7-day refresh token
       },
     });
 };
@@ -200,13 +197,72 @@ exports.googleAuth = async (req, res, next) => {
   }
 };
 
-// @desc    Log user out & clear cookie
+// @desc    Refresh session tokens using HTTP-only refresh token
+// @route   POST /api/auth/refresh
+// @access  Public (via valid refresh token cookie or body)
+exports.refreshToken = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token required. Please log in.',
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(token);
+    } catch (tokenErr) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token. Please log in again.',
+      });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User belonging to this token no longer exists.',
+      });
+    }
+
+    sendTokenResponse(user, 200, res, 'Token refreshed successfully.');
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Token refresh failed.',
+    });
+  }
+};
+
+// @desc    Log user out & clear cookies
 // @route   POST /api/auth/logout
 // @access  Public
 exports.logout = async (req, res) => {
+  const isProd = process.env.NODE_ENV === 'production';
+  const sameSite = process.env.COOKIE_SAME_SITE || (isProd ? 'none' : 'lax');
+  const secure = process.env.COOKIE_SECURE !== undefined
+    ? process.env.COOKIE_SECURE === 'true'
+    : isProd;
+
   res.cookie('token', 'none', {
-    expires: new Date(Date.now() + 5 * 1000), // 5 seconds
+    expires: new Date(Date.now() + 5 * 1000),
     httpOnly: true,
+    secure,
+    sameSite,
+    path: '/',
+  });
+
+  res.cookie('refreshToken', 'none', {
+    expires: new Date(Date.now() + 5 * 1000),
+    httpOnly: true,
+    secure,
+    sameSite,
+    path: '/api/auth',
   });
 
   res.status(200).json({
