@@ -31,6 +31,7 @@ import { LoadingState } from '../../components/ui/LoadingState';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { PageTransition } from '../../components/ui/PageTransition';
 import { containerVariants, itemVariants } from '../../lib/animations';
+import { LabReportUploader } from '../../components/patient/LabReportUploader';
 
 export default function PatientDashboardPage() {
   const navigate = useNavigate();
@@ -286,6 +287,10 @@ export default function PatientDashboardPage() {
               ))}
             </div>
           )}
+
+          <div className="pt-4">
+            <LabReportUploader />
+          </div>
         </div>
       </div>
     </PageTransition>

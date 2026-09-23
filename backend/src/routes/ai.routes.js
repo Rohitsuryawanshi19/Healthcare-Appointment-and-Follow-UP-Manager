@@ -16,4 +16,7 @@ router.post('/post-visit-summary', aiSummaryLimiter, aiController.getPostVisitSu
 // POST /api/ai/chat (Interactive streaming symptom triage assistant)
 router.post('/chat', aiChatLimiter, aiController.chatWithPatient);
 
+// POST /api/ai/parse-lab-report (Parse PDF lab report)
+router.post('/parse-lab-report', aiSummaryLimiter, aiController.parseLabReport);
+
 module.exports = router;

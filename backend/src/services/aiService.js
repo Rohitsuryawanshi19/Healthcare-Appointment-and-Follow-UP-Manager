@@ -4,6 +4,7 @@ const {
   medicalSafetySettings,
   preVisitResponseSchema,
   postVisitResponseSchema,
+  labReportSchema,
   defaultGenerationConfig,
 } = require('../config/aiConfig');
 const logger = require('../config/logger');
@@ -381,12 +382,67 @@ async function* streamPatientChat({ message, history = [] }, options = {}) {
   }
 }
 
+/**
+ * Parse a PDF lab report (base64) using Gemini inlineData
+ */
+async function parseLabReportWithAI(pdfBase64) {
+  const genAI = getGenAIClient();
+  if (!genAI || !pdfBase64) {
+    return {
+      keyFindings: ['Service Unavailable'],
+      summary: 'AI Parsing is currently disabled.',
+      abnormalities: false
+    };
+  }
+
+  try {
+    const response = await genAI.models.generateContent({
+      model: AI_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                data: pdfBase64,
+                mimeType: 'application/pdf',
+              },
+            },
+            {
+              text: 'Analyze this lab report. Extract 3-5 key findings, provide a brief summary for the patient, and determine if there are any clinically significant out-of-range abnormalities.',
+            },
+          ],
+        },
+      ],
+      config: {
+        ...defaultGenerationConfig,
+        responseMimeType: 'application/json',
+        responseSchema: labReportSchema,
+        safetySettings: medicalSafetySettings,
+      },
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text);
+    }
+    throw new Error('Empty AI response');
+  } catch (error) {
+    logger.error('Error parsing lab report with AI:', error.message);
+    return {
+      keyFindings: ['Error reading report'],
+      summary: 'We could not parse your report at this time.',
+      abnormalities: false
+    };
+  }
+}
+
 module.exports = {
   generatePreVisitSummary,
   generatePostVisitSummary,
   streamPatientChat,
   generateHeuristicFallback,
   generatePostVisitHeuristic,
+  parseLabReportWithAI,
   PRE_VISIT_DISCLAIMER,
   POST_VISIT_DISCLAIMER,
 };

@@ -123,6 +123,26 @@ const postVisitResponseSchema = {
   ],
 };
 
+const labReportSchema = {
+  type: Type.OBJECT,
+  properties: {
+    keyFindings: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'List of 3-5 key findings or out-of-range biomarkers from the report.',
+    },
+    summary: {
+      type: Type.STRING,
+      description: 'A brief, easily understandable summary of the lab results for the patient.',
+    },
+    abnormalities: {
+      type: Type.BOOLEAN,
+      description: 'True if there are any clinically significant out-of-range values, false otherwise.',
+    }
+  },
+  required: ['keyFindings', 'summary', 'abnormalities'],
+};
+
 const defaultGenerationConfig = {
   temperature: 0.3,
   topP: 0.95,
@@ -135,5 +155,6 @@ module.exports = {
   medicalSafetySettings,
   preVisitResponseSchema,
   postVisitResponseSchema,
+  labReportSchema,
   defaultGenerationConfig,
 };

@@ -4,6 +4,7 @@ const {
   generatePreVisitSummary,
   generatePostVisitSummary,
   streamPatientChat,
+  parseLabReportWithAI,
   PRE_VISIT_DISCLAIMER,
   POST_VISIT_DISCLAIMER,
 } = require('../services/aiService');
@@ -214,5 +215,23 @@ exports.chatWithPatient = async (req, res) => {
       })}\n\n`
     );
     res.end();
+  }
+};
+
+// @desc    Parse a PDF lab report using AI
+// @route   POST /api/ai/parse-lab-report
+// @access  Private
+exports.parseLabReport = async (req, res, next) => {
+  try {
+    const { pdfBase64 } = req.body;
+    if (!pdfBase64) {
+      return res.status(400).json({ success: false, message: 'pdfBase64 is required.' });
+    }
+
+    const data = await parseLabReportWithAI(pdfBase64);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error('Error parsing lab report:', error);
+    res.status(500).json({ success: false, message: 'Failed to parse lab report.' });
   }
 };
