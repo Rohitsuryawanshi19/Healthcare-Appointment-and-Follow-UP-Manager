@@ -64,12 +64,16 @@ const preVisitResponseSchema = {
       },
       description: 'Three structured diagnostic questions for the physician',
     },
+    recommendedSpecialty: {
+      type: Type.STRING,
+      description: 'The most appropriate medical specialty for these symptoms (e.g., Cardiology, Dermatology, General Medicine)',
+    },
     disclaimer: {
       type: Type.STRING,
       description: 'Mandatory clinical disclaimer',
     },
   },
-  required: ['urgency', 'chiefComplaint', 'suggestedQuestions', 'disclaimer'],
+  required: ['urgency', 'chiefComplaint', 'suggestedQuestions', 'recommendedSpecialty', 'disclaimer'],
 };
 
 /**

@@ -85,6 +85,7 @@ function generateHeuristicFallback(symptomsText = '', reason = 'Heuristic fallba
     urgency,
     chiefComplaint,
     suggestedQuestions: suggestedQuestions.slice(0, 3),
+    recommendedSpecialty: 'General Medicine',
     disclaimer: PRE_VISIT_DISCLAIMER,
     status: 'fallback',
     fallbackReason: reason,

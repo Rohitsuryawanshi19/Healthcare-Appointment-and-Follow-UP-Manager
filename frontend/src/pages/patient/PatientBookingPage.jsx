@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { patientService } from '../../services/patientService';
 import { appointmentService } from '../../services/appointmentService';
+import { aiService } from '../../services/aiService';
 import { useAuth } from '../../context/AuthContext';
 import { PageHeader } from '../../layouts/PageHeader';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../../components/ui/Card';
@@ -67,6 +68,13 @@ export default function PatientBookingPage() {
 
   // Submitting state
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // AI Triage State (Step 1)
+  const [showTriage, setShowTriage] = useState(false);
+  const [triageInput, setTriageInput] = useState('');
+  const [isTriaging, setIsTriaging] = useState(false);
+  const [aiSpecialty, setAiSpecialty] = useState(null);
+  const [aiUrgency, setAiUrgency] = useState(null);
 
   // Load selected doctor if doctorId param is present
   useEffect(() => {
@@ -246,6 +254,32 @@ export default function PatientBookingPage() {
     }
   };
 
+  const handleTriage = async () => {
+    if (!triageInput.trim()) return;
+    setIsTriaging(true);
+    try {
+      const res = await aiService.getPreVisitSummary({ symptoms: triageInput });
+      if (res.data) {
+        setAiSpecialty(res.data.recommendedSpecialty);
+        setAiUrgency(res.data.urgency);
+        setSymptoms(triageInput); // Pre-fill step 3 symptoms
+        toast({
+          title: 'AI Triage Complete',
+          description: `Recommended Specialty: ${res.data.recommendedSpecialty}`,
+          variant: 'success',
+        });
+      }
+    } catch (err) {
+      toast({
+        title: 'Triage Failed',
+        description: 'Unable to process symptoms at this time.',
+        variant: 'error',
+      });
+    } finally {
+      setIsTriaging(false);
+    }
+  };
+
   const steps = [
     { num: 1, label: 'Doctor Selection' },
     { num: 2, label: 'Date & Slot' },
@@ -332,40 +366,87 @@ export default function PatientBookingPage() {
             transition={{ duration: 0.2 }}
           >
             <Card className="p-6 space-y-4">
-              <CardHeader className="p-0">
-                <CardTitle>Select Medical Specialist</CardTitle>
-                <CardDescription>Choose a verified physician for your consultation.</CardDescription>
+              <CardHeader className="p-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <CardTitle>Select Medical Specialist</CardTitle>
+                  <CardDescription>Choose a verified physician for your consultation.</CardDescription>
+                </div>
+                {!doctorId && (
+                  <Button variant="outline" size="sm" onClick={() => setShowTriage(!showTriage)} className="shrink-0 text-teal-700 border-teal-200 hover:bg-teal-50">
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Not sure who to see? Ask AI
+                  </Button>
+                )}
               </CardHeader>
+              
+              {showTriage && !doctorId && (
+                <div className="bg-teal-50/50 p-4 rounded-xl border border-teal-100 space-y-3">
+                  <Label htmlFor="triage" className="text-teal-900 font-semibold">Describe your symptoms</Label>
+                  <Input
+                    id="triage"
+                    placeholder="e.g. I have severe chest pain and shortness of breath..."
+                    value={triageInput}
+                    onChange={(e) => setTriageInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleTriage()}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={handleTriage} disabled={isTriaging || !triageInput.trim()}>
+                      {isTriaging ? 'Analyzing...' : 'Find Right Specialist'}
+                    </Button>
+                    {aiSpecialty && (
+                      <Badge variant="outline" className="bg-white border-teal-200 text-teal-800">
+                        Recommendation: {aiSpecialty} {aiUrgency && `(Urgency: ${aiUrgency})`}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <div className="grid sm:grid-cols-2 gap-3.5 pt-2">
-                {doctorsList.map((doc) => (
-                  <div
-                    key={doc._id}
-                    onClick={() => {
-                      setSelectedDoctor(doc);
-                      setCurrentStep(2);
-                    }}
-                    className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                      selectedDoctor?._id === doc._id
-                        ? 'border-teal-600 bg-teal-50/40 ring-1 ring-teal-600'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Avatar size="md">
-                        <AvatarFallback className="bg-teal-50 text-teal-800 font-bold">
-                          {doc.userId?.name?.substring(0, 2).toUpperCase() || 'DR'}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">{doc.userId?.name}</h4>
-                        <p className="text-xs text-teal-700 font-semibold">{doc.specialization}</p>
-                        <p className="text-[11px] text-slate-400">
-                          {doc.experience} Yrs Exp • ₹{doc.consultationFee}
-                        </p>
+                {(() => {
+                  const filtered = doctorsList.filter((doc) => !aiSpecialty || doc.specialization.toLowerCase().includes(aiSpecialty.toLowerCase()) || aiSpecialty.toLowerCase().includes(doc.specialization.toLowerCase()) || aiSpecialty === 'General Medicine');
+                  
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="col-span-2 text-center p-6 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        <p className="text-slate-500 text-sm">No specialists found matching the recommendation ({aiSpecialty}).</p>
+                        <Button variant="link" onClick={() => setAiSpecialty(null)} className="mt-2 text-teal-600">
+                          View all doctors
+                        </Button>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((doc) => (
+                    <div
+                      key={doc._id}
+                      onClick={() => {
+                        setSelectedDoctor(doc);
+                        setCurrentStep(2);
+                      }}
+                      className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                        selectedDoctor?._id === doc._id
+                          ? 'border-teal-600 bg-teal-50/40 ring-1 ring-teal-600'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Avatar size="md">
+                          <AvatarFallback className="bg-teal-50 text-teal-800 font-bold">
+                            {doc.userId?.name?.substring(0, 2).toUpperCase() || 'DR'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm">{doc.userId?.name}</h4>
+                          <p className="text-xs text-teal-700 font-semibold">{doc.specialization}</p>
+                          <p className="text-[11px] text-slate-400">
+                            {doc.experience} Yrs Exp • ₹{doc.consultationFee}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             </Card>
           </motion.div>
