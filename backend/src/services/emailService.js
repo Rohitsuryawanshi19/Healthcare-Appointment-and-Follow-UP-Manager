@@ -7,6 +7,7 @@ const {
   getRescheduleTemplate,
   getAppointmentReminderTemplate,
   getDoctorLeaveNotificationTemplate,
+  getFollowUpPingTemplate,
 } = require('../utils/emailTemplates');
 
 let transporterInstance = null;
@@ -423,6 +424,21 @@ async function retryPendingAndFailedEmails() {
   }
 }
 
+/**
+ * Sends a follow-up ping email to check on a patient 3 days post-visit
+ */
+async function sendFollowUpPingEmail(toEmail, patientName, doctorName, userId = null) {
+  const html = getFollowUpPingTemplate({ patientName, doctorName });
+
+  return sendEmailWithTracking({
+    to: toEmail,
+    subject: 'CareFlow Check-in: How are you feeling?',
+    html,
+    userId,
+    type: 'follow_up',
+  });
+}
+
 module.exports = {
   getTransporter,
   sendEmailWithTracking,
@@ -431,6 +447,7 @@ module.exports = {
   sendCancellationEmail,
   sendDoctorLeaveNotification,
   sendRescheduleEmail,
+  sendFollowUpPingEmail,
   retryPendingAndFailedEmails,
   retryFailedNotifications: retryPendingAndFailedEmails,
 };

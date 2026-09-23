@@ -159,6 +159,10 @@ const appointmentSchema = new mongoose.Schema(
       maxlength: [2000, 'Follow-up instructions cannot exceed 2000 characters'],
       trim: true,
     },
+    followUpPingSent: {
+      type: Boolean,
+      default: false,
+    },
     prescriptionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Prescription',

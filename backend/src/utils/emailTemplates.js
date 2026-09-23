@@ -135,3 +135,21 @@ exports.getDoctorLeaveNotificationTemplate = ({ patientName, doctorName, date, l
   `;
   return wrapEmailLayout('CareFlow - Physician Schedule Notice', content);
 };
+
+exports.getFollowUpPingTemplate = ({ patientName, doctorName }) => {
+  const content = `
+    <h2 style="margin-top:0; color:#0f766e; font-size:18px;">How are you feeling?</h2>
+    <p>Hello <strong>${patientName}</strong>,</p>
+    <p>It's been a few days since your consultation with <strong>Dr. ${doctorName}</strong>.</p>
+    
+    <p>We are checking in to see how you are doing. Did you purchase your prescribed medication and are your symptoms improving?</p>
+
+    <div class="card" style="text-align: center;">
+      <a href="https://careflow-healthcare.com/patient/dashboard" class="btn" style="margin: 0 10px; padding: 10px 20px; text-decoration: none; display: inline-block;">I'm feeling better</a>
+      <a href="https://careflow-healthcare.com/patient/dashboard" class="btn" style="background:#e11d48; margin: 0 10px; padding: 10px 20px; text-decoration: none; display: inline-block;">I need help</a>
+    </div>
+
+    <p style="font-size:12px; color:#64748b;">If you are experiencing any severe symptoms, please contact emergency services immediately or reach out to the clinic.</p>
+  `;
+  return wrapEmailLayout('CareFlow - Post-Visit Check-in', content);
+};

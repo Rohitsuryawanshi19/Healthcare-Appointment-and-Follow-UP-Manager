@@ -24,6 +24,7 @@ const logger = require('./config/logger');
 const connectDB = require('./config/db');
 const { initSocket } = require('./services/socketService');
 const { startMedicationReminderJob } = require('./jobs/medicationReminderJob');
+const { startFollowUpPingJob } = require('./jobs/followUpPingJob');
 const { correlationIdMiddleware } = require('./middleware/correlationId.middleware');
 const { generalApiLimiter } = require('./middleware/rateLimiter.middleware');
 
@@ -272,6 +273,7 @@ if (process.env.NODE_ENV !== 'test') {
   server.listen(PORT, () => {
     logger.info(`CareFlow API server running on port ${PORT} (${process.env.NODE_ENV || 'development'} mode)`);
     startMedicationReminderJob();
+    startFollowUpPingJob();
   });
 }
 
