@@ -116,6 +116,7 @@ exports.login = async (req, res, next) => {
 
     sendTokenResponse(user, 200, res, 'Login successful.');
   } catch (error) {
+    console.error('[login] Unhandled 500 error:', error.name, '-', error.message);
     next(error);
   }
 };
@@ -193,6 +194,7 @@ exports.googleAuth = async (req, res, next) => {
       'Google registration successful. Welcome to CareFlow!'
     );
   } catch (error) {
+    console.error('[googleAuth] Unhandled 500 error:', error.name, '-', error.message, '\nStack:', error.stack);
     next(error);
   }
 };
