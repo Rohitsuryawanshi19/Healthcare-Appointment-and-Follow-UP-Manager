@@ -155,9 +155,10 @@ app.use('/api/calendar', calendarRoutes);
 // Health Check Route (Live Database Readiness Check)
 app.get('/api/health', (req, res) => {
   const isDbConnected = mongoose.connection.readyState === 1;
-  const statusCode = isDbConnected ? 200 : 503;
-  res.status(statusCode).json({
-    status: isDbConnected ? 'healthy' : 'unhealthy',
+  // Always return 200 so Render health checks pass during cold-start before MongoDB connects.
+  // DB connectivity status is visible in the response body.
+  res.status(200).json({
+    status: isDbConnected ? 'healthy' : 'starting',
     database: {
       connected: isDbConnected,
       readyState: mongoose.connection.readyState,
